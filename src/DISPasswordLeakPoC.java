@@ -172,8 +172,9 @@ public class DISPasswordLeakPoC {
 
         // --- SETUP: Generate PKCS#12 keystore using keytool ---
         System.out.println("\n[SETUP] Generating PKCS#12 keystore with test signing key...");
-        Path keystorePath = Files.createTempFile("canton-keystore-", ".p12");
-        Path passwordPath = Files.createTempFile("canton-password-", ".txt");
+        Path tmpDir = Files.createTempDirectory("dis-poc-");
+        Path keystorePath = tmpDir.resolve("canton-keystore.p12");
+        Path passwordPath = tmpDir.resolve("canton-password.txt");
         Files.write(passwordPath, CANTON_PASSWORD.getBytes(StandardCharsets.UTF_8));
 
         // Use keytool to generate a real keystore (avoids sun.security internal APIs)
