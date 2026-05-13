@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.security.*;
 import java.util.*;
+import javax.management.MBeanServer;
 
 public class DISPasswordLeakPoC {
 
