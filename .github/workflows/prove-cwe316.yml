@@ -1,0 +1,108 @@
+name: "CWE-316: DIS Canton Password Heap Persistence Proof"
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  prove-cwe316:
+    name: "Prove CWE-316 — Password Persists in JVM Heap"
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21 (matches DIS target)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Verify Java version
+        run: |
+          java -version
+          echo "---"
+          echo "DIS v2.9.3.0 targets JDK 21 (Temurin 21.0.9+10)"
+          echo "Assembly bundles: OpenJDK21U-jre_x64_windows_hotspot_21.0.9_10"
+
+      - name: Compile PoC
+        run: |
+          echo "═══════════════════════════════════════════════════════════════"
+          echo "  Compiling DIS CWE-316 PoC against JDK 21"
+          echo "  Source references:"
+          echo "    Tools.java:86-99 (signing block, password never zeroed)"
+          echo "    KeystoreRepository.java:47-49 (password read, never zeroed)"
+          echo "═══════════════════════════════════════════════════════════════"
+          cd src
+          javac --add-exports java.management/com.sun.management=ALL-UNNAMED \
+                DISPasswordLeakPoC.java
+          echo "Compilation successful"
+
+      - name: "Run PoC — Prove password persists in heap"
+        id: poc_run
+        run: |
+          cd src
+          # Run with necessary permissions for heap dump
+          # --add-opens required for HotSpotDiagnosticMXBean access
+          java --add-exports java.management/com.sun.management=ALL-UNNAMED \
+               --add-opens java.management/com.sun.management=ALL-UNNAMED \
+               -Xmx256m \
+               DISPasswordLeakPoC 2>&1 | tee ../poc-output.txt
+          
+          # The PoC exits with code 1 if vulnerable (password found in heap)
+          # We EXPECT exit code 1 — that proves the vulnerability
+          POC_EXIT=$?
+          if [ $POC_EXIT -eq 1 ]; then
+            echo "poc_result=VULNERABLE" >> $GITHUB_OUTPUT
+            echo ""
+            echo "✅ PoC confirmed: Password persists in JVM heap after signing"
+          else
+            echo "poc_result=NOT_VULNERABLE" >> $GITHUB_OUTPUT
+            echo ""
+            echo "❌ Unexpected: Password was not found in heap"
+          fi
+        continue-on-error: true
+
+      - name: Upload PoC output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: poc-output
+          path: poc-output.txt
+
+      - name: "Verdict"
+        if: always()
+        run: |
+          echo ""
+          echo "═══════════════════════════════════════════════════════════════"
+          echo "  AUTOMATED PROOF — CWE-316 in Swiss Post DIS v2.9.3.0"
+          echo "═══════════════════════════════════════════════════════════════"
+          echo ""
+          if [ "${{ steps.poc_run.outputs.poc_result }}" = "VULNERABLE" ]; then
+            echo "  STATUS:  VULNERABILITY CONFIRMED"
+            echo ""
+            echo "  The canton PKCS#12 keystore password was found in a JVM"
+            echo "  heap dump taken after Tools.saveXML() completed."
+            echo ""
+            echo "  Affected code:"
+            echo "    • Tools.java:89      — char[] loaded, never zeroed"
+            echo "    • Tools.java:91-92   — passed to KeyStore.load/getKey"  
+            echo "    • Tools.java:93-99   — function returns, no cleanup"
+            echo "    • KeystoreRepository.java:47-49 — byte[] intermediaries"
+            echo ""
+            echo "  Fix: Arrays.fill(keystorePassword, '\\0') in finally block"
+            echo ""
+            echo "  References:"
+            echo "    CWE-316  https://cwe.mitre.org/data/definitions/316.html"
+            echo "    Oracle   https://docs.oracle.com/en/java/javase/21/docs/api/"
+            echo "             java.base/java/security/KeyStore.html"
+            echo "═══════════════════════════════════════════════════════════════"
+          else
+            echo "  STATUS:  Could not confirm vulnerability"
+            echo "  (Check poc-output.txt artifact for details)"
+            echo "═══════════════════════════════════════════════════════════════"
+          fi
